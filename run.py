@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parent
 SEED = 360
 VIEWS = ['monthly_performance', 'territory_performance', 'physician_segments',
          'campaign_performance', 'campaign_segment_response',
-         'territory_ranking', 'territory_extremes', 'exposure_comparison']
+         'territory_ranking', 'territory_extremes', 'exposure_comparison',
+         'product_performance']
 
 
 def generate(seed=SEED, n=1200):
@@ -30,16 +31,33 @@ def generate(seed=SEED, n=1200):
     campaign = pd.DataFrame({'campaign_id':[1,2,3],
         'campaign_name':['Educational email','Webinar invitation','Field visit'],
         'channel':['Email','Webinar','Field']})
+    product = pd.DataFrame({
+        'product_id':[1,2,3],
+        'product_name':['Product A','Product B','Product C'],
+        'therapy_area':['Metabolic','Metabolic','Cardiovascular'],
+        'base_price_usd':[92.0,108.0,126.0]
+    })
+    calendar = pd.DataFrame({'month':[f'2025-{m:02d}' for m in range(1,13)]})
+    calendar['month_start'] = calendar.month + '-01'
+    calendar['quarter'] = ['Q1','Q1','Q1','Q2','Q2','Q2','Q3','Q3','Q3','Q4','Q4','Q4']
+    calendar['year'] = 2025
     facts, contacts = [], []
     for m in range(1,13):
         month=f'2025-{m:02d}'
         season=1+0.12*np.sin(2*np.pi*m/12)
         active=rng.random(n)>0.12
         volume=rng.poisson(base*season*(0.85+physician.territory_id.to_numpy()*0.04))*active
-        price=rng.uniform(85,115,n)  # purely illustrative USD value per prescription
-        facts.append(pd.DataFrame({'physician_id':physician.physician_id,'month':month,
-            'prescriptions':volume,'revenue_usd':np.round(volume*price,2),
-            'target_rx':np.maximum(1,np.rint(base*1.12)).astype(int)}))
+        # Allocate each physician-month total across three simulated products.
+        # Shares are fixed generator assumptions, not observed market shares.
+        allocations=np.array([rng.multinomial(v,[0.46,0.34,0.20]) for v in volume])
+        target_total=np.maximum(1,np.rint(base*1.12)).astype(int)
+        target_allocations=np.array([rng.multinomial(v,[0.46,0.34,0.20]) for v in target_total])
+        for i, item in product.iterrows():
+            price=rng.uniform(item.base_price_usd*.92,item.base_price_usd*1.08,n)
+            rx=allocations[:,i]
+            facts.append(pd.DataFrame({'physician_id':physician.physician_id,
+                'product_id':item.product_id,'month':month,'prescriptions':rx,
+                'revenue_usd':np.round(rx*price,2),'target_rx':target_allocations[:,i]}))
         # Nonrandom contact selection is deliberately confounded by underlying activity.
         selected=np.flatnonzero(rng.random(n)<np.clip(0.15+base/170,0.15,0.8))
         channels=rng.integers(1,4,len(selected))
@@ -48,6 +66,7 @@ def generate(seed=SEED, n=1200):
             'campaign_id':channels,'responded':rng.binomial(1,response_p),
             'cost_usd':np.choose(channels-1,[2.0,18.0,75.0])}))
     return {'territory':territory,'physician':physician,'campaign':campaign,
+            'product':product,'calendar':calendar,
             'prescription_month':pd.concat(facts,ignore_index=True),
             'outreach':pd.concat(contacts,ignore_index=True)}
 
@@ -55,19 +74,22 @@ def generate(seed=SEED, n=1200):
 def validate_frames(tables):
     p,f,o=tables['physician'],tables['prescription_month'],tables['outreach']
     assert p.physician_id.is_unique, 'Duplicate physician'
-    assert not f.duplicated(['physician_id','month']).any(), 'Duplicate physician-month'
+    assert not f.duplicated(['physician_id','product_id','month']).any(), 'Duplicate physician-product-month'
     assert not o.duplicated(['physician_id','month']).any(), 'Duplicate outreach grain'
     assert all(not t.isna().any().any() for t in tables.values()), 'Missing values'
     assert set(p.territory_id)<=set(tables['territory'].territory_id), 'Unknown territory'
     assert set(f.physician_id)<=set(p.physician_id), 'Orphan prescription'
+    assert set(f.product_id)<=set(tables['product'].product_id), 'Unknown product'
+    assert set(f.month)<=set(tables['calendar'].month), 'Unknown calendar month'
     assert set(o.physician_id)<=set(p.physician_id), 'Orphan outreach'
     assert set(o.campaign_id)<=set(tables['campaign'].campaign_id), 'Unknown campaign'
     assert (f[['prescriptions','revenue_usd','target_rx']]>=0).all().all(), 'Negative value'
-    assert (f.target_rx>0).all()
+    assert (f.target_rx>=0).all()
     assert o.responded.isin([0,1]).all(), 'Invalid response'
-    assert f.groupby('physician_id').size().eq(12).all(), 'Missing observation months'
-    return {'physicians':len(p),'physician_months':len(f),'contacts':len(o),
-            'checks':'PASS: unique grains, required values, foreign keys, ranges, 12-month coverage'}
+    assert f.groupby('physician_id').month.nunique().eq(12).all(), 'Missing observation months'
+    assert f.groupby(['physician_id','month']).product_id.nunique().eq(len(tables['product'])).all(), 'Missing product coverage'
+    return {'physicians':len(p),'prescription_rows':len(f),'contacts':len(o),
+            'checks':'PASS: unique grains, required values, foreign keys, ranges, calendar and product coverage'}
 
 
 def build_database(tables, path):
@@ -78,7 +100,9 @@ def build_database(tables, path):
         frame.to_sql(name,con,index=False,if_exists='replace')
     con.executescript('''
     CREATE UNIQUE INDEX IF NOT EXISTS physician_pk ON physician(physician_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS prescription_grain ON prescription_month(physician_id,month);
+    CREATE UNIQUE INDEX IF NOT EXISTS product_pk ON product(product_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS calendar_pk ON calendar(month);
+    CREATE UNIQUE INDEX IF NOT EXISTS prescription_grain ON prescription_month(physician_id,product_id,month);
     CREATE UNIQUE INDEX IF NOT EXISTS outreach_grain ON outreach(physician_id,month);
     ''')
     con.executescript((ROOT/'sql/reports.sql').read_text())
@@ -92,6 +116,8 @@ def build_database(tables, path):
 
 
 def dashboard(reports,output):
+    charts=output/'charts'
+    charts.mkdir(exist_ok=True)
     monthly=reports['monthly_performance']
     fig=make_subplots(rows=1,cols=2,subplot_titles=['Monthly prescriptions','Synthetic revenue (USD)'])
     groups=['All territories']+sorted(monthly.territory_name.unique().tolist())
@@ -111,8 +137,18 @@ def dashboard(reports,output):
     segment=px.bar(segments,x='segment',y='physicians',title='Descriptive physician activity segments',template='plotly_white')
     campaign=px.bar(reports['campaign_performance'],x='channel',y='response_rate_pct',
         title='Observed response among contacts — not causal uplift',template='plotly_white')
+    product=px.bar(reports['product_performance'].sort_values('revenue_usd',ascending=False),
+        x='product_name',y='revenue_usd',color='therapy_area',
+        title='Synthetic revenue by product',template='plotly_white')
+    exposure=px.line(reports['exposure_comparison'],x='month',y='rx_per_physician_month',
+        color='exposure_group',markers=True,
+        title='Same-month activity by recorded campaign exposure',template='plotly_white')
+    for name,figure in {'monthly_trends':fig,'territory_performance':territory,
+                         'physician_segments':segment,'campaign_response':campaign,
+                         'product_performance':product,'exposure_comparison':exposure}.items():
+        figure.write_html(charts/f'{name}.html',include_plotlyjs='cdn')
     blocks=[f.to_html(full_html=False,include_plotlyjs=True if i==0 else False)
-            for i,f in enumerate([fig,territory,segment,campaign])]
+            for i,f in enumerate([fig,territory,segment,campaign,product,exposure])]
     html='''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Pharmaceutical Commercial Analytics</title><style>body{font:16px system-ui;margin:32px auto;max-width:1150px;padding:0 20px;color:#172b4d} .note{background:#eef4fb;padding:18px;border-radius:8px}</style>
     <h1>Pharmaceutical Commercial Analytics</h1><p class="note">Independent portfolio study. All data and financial values are synthetic. Campaign response is descriptive; no causal sales impact or ROI is estimated. Use the territory dropdown to explore trends.</p>'''
@@ -142,7 +178,7 @@ def main():
     c=reports['campaign_performance'].sort_values('cost_per_response_usd')
     report=f'''# Commercial findings — synthetic demonstration
 
-Generated {audit['physicians']:,} physicians, {audit['physician_months']:,} physician-months and {audit['contacts']:,} campaign contacts with seed {SEED}.
+Generated {audit['physicians']:,} physicians, {audit['prescription_rows']:,} synthetic physician-product-month rows and {audit['contacts']:,} campaign contacts with seed {SEED}.
 
 ## Observations
 - Prescription volume totals {audit['prescriptions']:,}; SQL totals reconcile to the source facts.

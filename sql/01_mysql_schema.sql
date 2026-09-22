@@ -18,18 +18,34 @@ CREATE TABLE campaign (
   campaign_name VARCHAR(100) NOT NULL UNIQUE,
   channel VARCHAR(40) NOT NULL
 ) ENGINE=InnoDB;
+CREATE TABLE product (
+  product_id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  product_name VARCHAR(100) NOT NULL UNIQUE,
+  therapy_area VARCHAR(80) NOT NULL,
+  base_price_usd DECIMAL(12,2) NOT NULL,
+  CONSTRAINT ck_product_price_positive CHECK (base_price_usd > 0)
+) ENGINE=InnoDB;
+CREATE TABLE calendar (
+  month_start DATE NOT NULL PRIMARY KEY,
+  month_key CHAR(7) NOT NULL UNIQUE,
+  quarter_label CHAR(2) NOT NULL,
+  calendar_year SMALLINT UNSIGNED NOT NULL
+) ENGINE=InnoDB;
 -- Grain: one simulated physician-month record, including zero prescriptions.
 CREATE TABLE prescription_month (
   physician_id INT UNSIGNED NOT NULL,
+  product_id TINYINT UNSIGNED NOT NULL,
   month_start DATE NOT NULL,
   prescriptions INT UNSIGNED NOT NULL,
   revenue_usd DECIMAL(14,2) NOT NULL,
   target_rx INT UNSIGNED NOT NULL,
-  PRIMARY KEY (physician_id, month_start), KEY ix_prescription_month (month_start),
+  PRIMARY KEY (physician_id, product_id, month_start), KEY ix_prescription_month (month_start),
   CONSTRAINT ck_prescription_nonnegative CHECK (prescriptions >= 0),
   CONSTRAINT ck_revenue_nonnegative CHECK (revenue_usd >= 0),
-  CONSTRAINT ck_target_positive CHECK (target_rx > 0),
-  CONSTRAINT fk_prescription_physician FOREIGN KEY (physician_id) REFERENCES physician (physician_id)
+  CONSTRAINT ck_target_nonnegative CHECK (target_rx >= 0),
+  CONSTRAINT fk_prescription_physician FOREIGN KEY (physician_id) REFERENCES physician (physician_id),
+  CONSTRAINT fk_prescription_product FOREIGN KEY (product_id) REFERENCES product (product_id),
+  CONSTRAINT fk_prescription_calendar FOREIGN KEY (month_start) REFERENCES calendar (month_start)
 ) ENGINE=InnoDB;
 -- Grain: at most one simulated outreach contact per physician-month.
 CREATE TABLE outreach (

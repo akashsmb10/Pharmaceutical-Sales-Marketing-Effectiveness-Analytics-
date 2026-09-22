@@ -22,10 +22,13 @@ def reconcile(tables, reports):
     facts = tables['prescription_month'].merge(
         tables['physician'][['physician_id','territory_id']],
         on='physician_id', validate='many_to_one')
-    facts['active'] = (facts.prescriptions > 0).astype(int)
     monthly = facts.groupby(['territory_id','month'], as_index=False).agg(
-        prescriptions=('prescriptions','sum'), revenue_usd=('revenue_usd','sum'),
-        active_physicians=('active','sum'))
+        prescriptions=('prescriptions','sum'), revenue_usd=('revenue_usd','sum'))
+    active = (facts[facts.prescriptions > 0]
+              .groupby(['territory_id','month']).physician_id.nunique()
+              .rename('active_physicians').reset_index())
+    monthly = monthly.merge(active, on=['territory_id','month'], how='left')
+    monthly['active_physicians'] = monthly.active_physicians.fillna(0).astype(int)
     previous = monthly.groupby('territory_id').prescriptions.shift()
     monthly['rx_growth_pct'] = 100 * (monthly.prescriptions-previous)/previous.replace(0,np.nan)
     compare('monthly totals, active physicians and growth', reports['monthly_performance'],
@@ -41,6 +44,17 @@ def reconcile(tables, reports):
     compare('territory revenue ranks and contribution',reports['territory_ranking'],territory,
             ['territory_id'],['revenue_usd','revenue_rank','bottom_revenue_rank','revenue_contribution_pct'])
 
+    products = facts.groupby('product_id', as_index=False).agg(
+        prescriptions=('prescriptions','sum'), revenue_usd=('revenue_usd','sum'),
+        target_rx=('target_rx','sum'))
+    products.revenue_usd = products.revenue_usd.round(2)
+    products['target_attainment_pct'] = 100*products.prescriptions/products.target_rx.replace(0,np.nan)
+    products['revenue_rank'] = products.revenue_usd.rank(method='min',ascending=False)
+    products['revenue_contribution_pct'] = 100*products.revenue_usd/products.revenue_usd.sum()
+    compare('product totals, ranks and contribution',reports['product_performance'],products,
+            ['product_id'],['prescriptions','revenue_usd','target_rx','target_attainment_pct',
+            'revenue_rank','revenue_contribution_pct'])
+
     outreach = tables['outreach']
     campaign = outreach.groupby('campaign_id', as_index=False).agg(
         contacts=('physician_id','size'), responses=('responded','sum'),
@@ -50,7 +64,9 @@ def reconcile(tables, reports):
     compare('campaign response denominators and costs',reports['campaign_performance'],campaign,
             ['campaign_id'],['contacts','responses','contact_cost_usd','response_rate_pct','cost_per_response_usd'])
 
-    exposed = facts.merge(outreach,on=['physician_id','month'],how='left',
+    physician_month = facts.groupby(['physician_id','month'],as_index=False).agg(
+        prescriptions=('prescriptions','sum'), revenue_usd=('revenue_usd','sum'))
+    exposed = physician_month.merge(outreach,on=['physician_id','month'],how='left',
                           validate='one_to_one',indicator=True)
     exposed['exposure_group'] = np.where(exposed['_merge']=='both',
                                          'Contact recorded','No contact recorded')

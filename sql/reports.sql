@@ -2,9 +2,9 @@
 CREATE VIEW monthly_performance AS
 WITH totals AS (
  SELECT f.month, p.territory_id, t.territory_name,
-        COUNT(*) AS physicians, SUM(f.prescriptions) AS prescriptions,
+        COUNT(DISTINCT f.physician_id) AS physicians, SUM(f.prescriptions) AS prescriptions,
         SUM(f.revenue_usd) AS revenue_usd,
-        SUM(CASE WHEN f.prescriptions > 0 THEN 1 ELSE 0 END) AS active_physicians
+        COUNT(DISTINCT CASE WHEN f.prescriptions > 0 THEN f.physician_id END) AS active_physicians
  FROM prescription_month f
  JOIN physician p USING(physician_id)
  JOIN territory t USING(territory_id)
@@ -58,6 +58,18 @@ SELECT c.channel, s.segment, COUNT(*) AS contacts, SUM(o.responded) AS responses
 FROM outreach o JOIN campaign c USING(campaign_id) JOIN physician_segments s USING(physician_id)
 GROUP BY c.channel,s.segment;
 
+-- Product results are descriptive synthetic aggregates. Revenue is illustrative.
+CREATE VIEW product_performance AS
+SELECT pr.product_id, pr.product_name, pr.therapy_area,
+       SUM(f.prescriptions) AS prescriptions,
+       ROUND(SUM(f.revenue_usd),2) AS revenue_usd,
+       SUM(f.target_rx) AS target_rx,
+       ROUND(100.0*SUM(f.prescriptions)/NULLIF(SUM(f.target_rx),0),2) AS target_attainment_pct,
+       RANK() OVER (ORDER BY SUM(f.revenue_usd) DESC) AS revenue_rank,
+       ROUND(100.0*SUM(f.revenue_usd)/NULLIF(SUM(SUM(f.revenue_usd)) OVER (),0),2) AS revenue_contribution_pct
+FROM prescription_month f JOIN product pr USING(product_id)
+GROUP BY pr.product_id,pr.product_name,pr.therapy_area;
+
 -- Rank annual synthetic revenue. Equal rounded revenue receives the same rank;
 -- physician counts and target attainment are separate measures of performance.
 CREATE VIEW territory_ranking AS
@@ -81,6 +93,10 @@ FROM territory_ranking WHERE bottom_revenue_rank <= 3;
 -- multiply rows. Missing outreach means no recorded contact, not response=0.
 -- Same-month activity has no before/after ordering and is not causal uplift.
 CREATE VIEW exposure_comparison AS
+WITH physician_month AS (
+ SELECT physician_id, month, SUM(prescriptions) AS prescriptions, SUM(revenue_usd) AS revenue_usd
+ FROM prescription_month GROUP BY physician_id, month
+)
 SELECT f.month,
        CASE WHEN o.physician_id IS NULL THEN 'No contact recorded'
             ELSE 'Contact recorded' END AS exposure_group,
@@ -92,6 +108,6 @@ SELECT f.month,
        SUM(o.responded) AS responses,
        ROUND(100.0 * SUM(o.responded) / NULLIF(COUNT(o.physician_id),0),2)
          AS response_rate_pct
-FROM prescription_month f
+FROM physician_month f
 LEFT JOIN outreach o ON o.physician_id=f.physician_id AND o.month=f.month
 GROUP BY f.month, exposure_group;

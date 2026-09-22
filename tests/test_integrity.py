@@ -31,7 +31,7 @@ def test_zero_denominators_and_tied_ranks(tmp_path):
     assert monthly.loc[monthly.month == '2025-02', 'rx_growth_pct'].isna().all()
     assert reports['campaign_performance'].cost_per_response_usd.isna().all()
     exposure = reports['exposure_comparison']
-    assert exposure.physician_months.sum() == len(tables['prescription_month'])
+    assert exposure.physician_months.sum() == len(tables['physician']) * len(tables['calendar'])
     assert exposure.loc[exposure.exposure_group == 'No contact recorded', 'responses'].isna().all()
 
 
