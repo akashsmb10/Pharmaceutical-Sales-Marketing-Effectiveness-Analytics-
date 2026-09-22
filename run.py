@@ -129,9 +129,11 @@ def dashboard(reports,output):
                 name=name,visible=i==0,showlegend=False),row=1,col=j+1)
     buttons=[dict(label=name,method='update',args=[{'visible':[j//2==i for j in range(2*len(groups))]}])
              for i,name in enumerate(groups)]
-    fig.update_layout(template='plotly_white',height=400,
+    palette=['#2563eb','#0f766e','#7c3aed','#ea580c','#db2777','#0891b2','#65a30d','#64748b','#dc2626']
+    fig.update_layout(template='plotly_white',height=360,
+        paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='white',font=dict(color='#172554'),
         updatemenus=[dict(buttons=buttons,x=0,y=1.25)],margin=dict(t=100))
-    territory=px.bar(reports['territory_performance'],x='territory_name',y='target_attainment_pct',
+    territory=px.bar(reports['territory_performance'].sort_values('target_attainment_pct'),x='territory_name',y='target_attainment_pct',
         title='Prescription target attainment (synthetic targets)',template='plotly_white')
     segments=reports['physician_segments'].segment.value_counts().rename_axis('segment').reset_index(name='physicians')
     segment=px.bar(segments,x='segment',y='physicians',title='Descriptive physician activity segments',template='plotly_white')
@@ -143,16 +145,33 @@ def dashboard(reports,output):
     exposure=px.line(reports['exposure_comparison'],x='month',y='rx_per_physician_month',
         color='exposure_group',markers=True,
         title='Same-month activity by recorded campaign exposure',template='plotly_white')
+    figures=[fig,territory,segment,campaign,product,exposure]
+    for figure in figures:
+        figure.update_layout(paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='white',font=dict(color='#172554'),
+                             margin=dict(l=42,r=20,t=62,b=42),colorway=palette)
+        figure.update_xaxes(showgrid=False)
+        figure.update_yaxes(gridcolor='#e2e8f0',zeroline=False)
     for name,figure in {'monthly_trends':fig,'territory_performance':territory,
                          'physician_segments':segment,'campaign_response':campaign,
                          'product_performance':product,'exposure_comparison':exposure}.items():
         figure.write_html(charts/f'{name}.html',include_plotlyjs='cdn')
-    blocks=[f.to_html(full_html=False,include_plotlyjs=True if i==0 else False)
-            for i,f in enumerate([fig,territory,segment,campaign,product,exposure])]
+    blocks=[f'<section class="panel {"wide" if i == 0 else ""}">{f.to_html(full_html=False,include_plotlyjs=True if i==0 else False)}</section>'
+            for i,f in enumerate(figures)]
+    monthly_all=monthly.groupby('month',as_index=False).agg(revenue_usd=('revenue_usd','sum'),prescriptions=('prescriptions','sum'),active_physicians=('active_physicians','sum'))
+    total_revenue=monthly_all.revenue_usd.sum(); total_rx=monthly_all.prescriptions.sum()
+    latest_growth=(monthly_all.prescriptions.iloc[-1]/monthly_all.prescriptions.iloc[-2]-1)*100
+    best_channel=reports['campaign_performance'].sort_values('cost_per_response_usd').iloc[0]
+    cards=f'''<div class="cards">
+    <article><span>Illustrative revenue</span><strong>${total_revenue/1e6:.1f}M</strong><small>Synthetic 2025 portfolio</small></article>
+    <article><span>Prescriptions</span><strong>{total_rx/1000:.0f}K</strong><small>Across all territories</small></article>
+    <article><span>Latest-month growth</span><strong>{latest_growth:+.1f}%</strong><small>Prescription volume MoM</small></article>
+    <article><span>Lowest cost / response</span><strong>{best_channel.channel}</strong><small>${best_channel.cost_per_response_usd:.0f} per recorded response</small></article></div>'''
     html='''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Pharmaceutical Commercial Analytics</title><style>body{font:16px system-ui;margin:32px auto;max-width:1150px;padding:0 20px;color:#172b4d} .note{background:#eef4fb;padding:18px;border-radius:8px}</style>
-    <h1>Pharmaceutical Commercial Analytics</h1><p class="note">Independent portfolio study. All data and financial values are synthetic. Campaign response is descriptive; no causal sales impact or ROI is estimated. Use the territory dropdown to explore trends.</p>'''
-    (output/'dashboard.html').write_text(html+''.join(blocks)+'</html>',encoding='utf-8')
+    <title>Pharmaceutical Commercial Analytics</title><style>
+    *{box-sizing:border-box} body{margin:0;background:#f5f8fc;color:#172554;font:15px Inter,system-ui,-apple-system,sans-serif} .shell{max-width:1440px;margin:auto;padding:36px 28px 56px}.hero{background:linear-gradient(120deg,#0f2b5b,#2563eb);color:white;border-radius:20px;padding:32px 34px;margin-bottom:22px;box-shadow:0 12px 30px #1e3a8a33}.eyebrow{text-transform:uppercase;letter-spacing:.11em;font-weight:700;font-size:11px;opacity:.78}.hero h1{font-size:32px;margin:8px 0}.hero p{max-width:780px;line-height:1.55;margin:0;color:#dbeafe}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:20px 0}.cards article,.panel{background:#fff;border:1px solid #e5edf8;border-radius:16px;box-shadow:0 4px 14px #1e3a8a0c}.cards article{padding:19px}.cards span,.cards small{display:block;color:#64748b}.cards strong{display:block;font-size:27px;margin:8px 0;color:#172554}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{overflow:hidden}.wide{grid-column:1/-1}.notice{margin-top:18px;padding:14px 17px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;line-height:1.45}@media(max-width:850px){.cards,.grid{grid-template-columns:1fr}.wide{grid-column:auto}.shell{padding:18px}.hero{padding:25px}.hero h1{font-size:26px}}</style>
+    <main class="shell"><header class="hero"><div class="eyebrow">Executive commercial dashboard · portfolio simulation</div><h1>Pharmaceutical Sales &amp; Marketing Effectiveness</h1><p>Explore synthetic commercial performance across revenue, territory execution, product mix, physician activity, and recorded campaign response.</p></header>'''
+    disclaimer='<p class="notice"><strong>Interpret with care:</strong> all data and financial values are synthetic. Campaign response and exposure comparisons are descriptive only; they do not estimate causal impact, incremental sales, or ROI.</p></main>'
+    (output/'dashboard.html').write_text(html+cards+'<div class="grid">'+''.join(blocks)+'</div>'+disclaimer+'</html>',encoding='utf-8')
 
 
 def main():

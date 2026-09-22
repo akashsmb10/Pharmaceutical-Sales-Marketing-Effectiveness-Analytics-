@@ -45,7 +45,7 @@ Successful execution writes `outputs/validation.json` with `data_type: synthetic
 
 ## Dashboard and Power BI
 
-Open `outputs/dashboard.html` or any file in `outputs/charts/` after running the pipeline. To build a local Power BI report from generated outputs, use [the Power BI build guide](dashboard/powerbi_build_guide.md). No PBIX or dashboard screenshots are committed.
+Open `outputs/dashboard.html` for the responsive executive dashboard, or any file in `outputs/charts/` for a focused interactive visual. To build a local Power BI report from generated outputs, use [the Power BI build guide](dashboard/powerbi_build_guide.md). No PBIX file is committed.
 
 ## Findings and limitations
 
