@@ -43,7 +43,7 @@ python run.py
 python -m pytest -q
 ```
 
-Expected verification: `validation.json` reports `data_type` as `synthetic`, `sql_reconciliation` as `PASS`, and the test suite reports five passing tests.
+Expected verification: `validation.json` reports `data_type` as `synthetic` and `sql_reconciliation` as `PASS`. The test suite must pass. See [KPI definitions and checkpoint commands](docs/kpi_definitions.md) for independent Pandas reconciliation, territory rankings, and campaign exposure comparisons. These checks currently execute against SQLite only.
 
 ## Outputs and interpretation
 

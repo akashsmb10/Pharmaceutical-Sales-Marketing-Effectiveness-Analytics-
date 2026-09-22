@@ -57,3 +57,41 @@ SELECT c.channel, s.segment, COUNT(*) AS contacts, SUM(o.responded) AS responses
        ROUND(100.0*SUM(o.responded)/COUNT(*),2) AS response_rate_pct
 FROM outreach o JOIN campaign c USING(campaign_id) JOIN physician_segments s USING(physician_id)
 GROUP BY c.channel,s.segment;
+
+-- Rank annual synthetic revenue. Equal rounded revenue receives the same rank;
+-- physician counts and target attainment are separate measures of performance.
+CREATE VIEW territory_ranking AS
+SELECT *,
+       RANK() OVER (ORDER BY revenue_usd DESC) AS revenue_rank,
+       RANK() OVER (ORDER BY revenue_usd ASC) AS bottom_revenue_rank,
+       ROUND(100.0 * revenue_usd / NULLIF(SUM(revenue_usd) OVER (),0),2)
+         AS revenue_contribution_pct
+FROM territory_performance;
+
+-- Three rank positions, including ties; a territory may occur in both groups
+-- in a small sample. UNION ALL preserves those two distinct memberships.
+CREATE VIEW territory_extremes AS
+SELECT 'Top revenue ranks' AS comparison_group, *
+FROM territory_ranking WHERE revenue_rank <= 3
+UNION ALL
+SELECT 'Bottom revenue ranks' AS comparison_group, *
+FROM territory_ranking WHERE bottom_revenue_rank <= 3;
+
+-- Both tables are unique by physician-month. Joining only on physician would
+-- multiply rows. Missing outreach means no recorded contact, not response=0.
+-- Same-month activity has no before/after ordering and is not causal uplift.
+CREATE VIEW exposure_comparison AS
+SELECT f.month,
+       CASE WHEN o.physician_id IS NULL THEN 'No contact recorded'
+            ELSE 'Contact recorded' END AS exposure_group,
+       COUNT(*) AS physician_months,
+       SUM(f.prescriptions) AS prescriptions,
+       ROUND(SUM(f.revenue_usd),2) AS revenue_usd,
+       ROUND(AVG(f.prescriptions),2) AS rx_per_physician_month,
+       COUNT(o.physician_id) AS contacts,
+       SUM(o.responded) AS responses,
+       ROUND(100.0 * SUM(o.responded) / NULLIF(COUNT(o.physician_id),0),2)
+         AS response_rate_pct
+FROM prescription_month f
+LEFT JOIN outreach o ON o.physician_id=f.physician_id AND o.month=f.month
+GROUP BY f.month, exposure_group;

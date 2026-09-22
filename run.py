@@ -10,11 +10,13 @@ import plotly
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
+from reconciliation import reconcile
 
 ROOT = Path(__file__).resolve().parent
 SEED = 360
 VIEWS = ['monthly_performance', 'territory_performance', 'physician_segments',
-         'campaign_performance', 'campaign_segment_response']
+         'campaign_performance', 'campaign_segment_response',
+         'territory_ranking', 'territory_extremes', 'exposure_comparison']
 
 
 def generate(seed=SEED, n=1200):
@@ -70,7 +72,7 @@ def validate_frames(tables):
 
 def build_database(tables, path):
     con=sqlite3.connect(path)
-    for view in VIEWS:
+    for view in reversed(VIEWS):
         con.execute(f'DROP VIEW IF EXISTS {view}')
     for name,frame in tables.items():
         frame.to_sql(name,con,index=False,if_exists='replace')
@@ -126,12 +128,15 @@ def main():
         path=data/f'{name}.csv'; frame.to_csv(path,index=False)
         hashes[name]=hashlib.sha256(path.read_bytes()).hexdigest()
     reports=build_database(tables,output/'analytics.sqlite')
+    reconciliation = reconcile(tables, reports)
+    (output/'reconciliation.json').write_text(json.dumps(reconciliation,indent=2))
     for name,frame in reports.items(): frame.to_csv(output/f'{name}.csv',index=False)
     dashboard(reports,output)
     audit.update({'seed':SEED,'data_type':'synthetic','source_sha256':hashes,
         'versions':{'python':platform.python_version(),'numpy':np.__version__,'pandas':pd.__version__,'plotly':plotly.__version__},
         'prescriptions':int(tables['prescription_month'].prescriptions.sum()),
-        'responses':int(tables['outreach'].responded.sum()),'sql_reconciliation':'PASS'})
+        'responses':int(tables['outreach'].responded.sum()),'sql_reconciliation':'PASS',
+        'reconciliation_engine':'SQLite','reconciled_metrics':reconciliation['checks']})
     (output/'validation.json').write_text(json.dumps(audit,indent=2))
     t=reports['territory_performance'].sort_values('target_attainment_pct')
     c=reports['campaign_performance'].sort_values('cost_per_response_usd')
@@ -151,7 +156,7 @@ Generated {audit['physicians']:,} physicians, {audit['physician_months']:,} phys
 3. For causal campaign evaluation, pre-specify a randomized, appropriately powered pilot with a holdout and incremental outcome definition; these reports alone cannot support an uplift claim.
 
 ## Limits
-The generator sets activity, seasonality and response probabilities. Findings describe that simulation, not a pharmaceutical market. Segments use the full year and are retrospective. The dashboard is Plotly HTML; a Power BI import guide is supplied, but no PBIX report has been built.
+The generator sets activity, seasonality and response probabilities. Findings describe that simulation, not a pharmaceutical market. Segments use the full year and are retrospective. The dashboard is Plotly HTML; a Power BI import guide and PBIX report remain pending.
 '''
     (output/'findings.md').write_text(report,encoding='utf-8')
     print(json.dumps(audit,indent=2))
