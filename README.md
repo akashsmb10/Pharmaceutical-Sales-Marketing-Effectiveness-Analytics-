@@ -31,7 +31,7 @@ territory (1) ──< physician (1) ──< prescription_month
 - A Plotly HTML exploratory dashboard at `outputs/dashboard.html` after a run.
 - Reconciliation checks between source facts and SQL-view aggregates.
 
-The SQL is currently written and executed for SQLite. A MySQL schema/loading implementation and a Power BI report are not yet included.
+The executed Python path uses SQLite. A MySQL 8 schema, CSV-load workflow, audit queries, and analytical views are supplied in `sql/`; see [the MySQL runbook](docs/mysql_runbook.md). MySQL execution has not yet been verified in this workspace. A Power BI report is not yet included.
 
 ## Reproduce on Windows
 
@@ -54,7 +54,7 @@ Treat campaign response comparisons as descriptive only: physicians are selected
 ## Current limitations
 
 - Entirely synthetic and illustrative; not valid for real market, client, or clinical decisions.
-- SQL execution target is SQLite, not MySQL.
+- The MySQL scripts are provided but unverified against a local MySQL server in this workspace.
 - Physician segments are retrospective activity groupings, not prescribing recommendations.
 - No Power BI `.pbix`, dashboard screenshots, or Power BI build guide is included yet.
 - No product table or product-level sales fact exists in the current generator.
