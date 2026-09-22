@@ -4,4 +4,5 @@ __pycache__/
 .venv-p1/
 sql/*.local.sql
 data/
+outputs/
 outputs/*.sqlite
